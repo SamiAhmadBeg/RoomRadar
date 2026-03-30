@@ -1,0 +1,17 @@
+{
+  "camera_id": "default",
+  "zones": [
+    {
+      "id": "zone_1",
+      "name": "Area 1",
+      "roi": [0.0, 0.0, 0.5, 0.5],
+      "total_seats": 1
+    },
+    {
+      "id": "zone_2",
+      "name": "Area 2",
+      "roi": [0.5, 0.0, 1.0, 0.5],
+      "total_seats": 1
+    }
+  ]
+}

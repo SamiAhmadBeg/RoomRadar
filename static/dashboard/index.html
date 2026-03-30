@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RoomRadar</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1419;
+      color: #e7e9ea;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin-bottom: 0.5rem;
+      color: #fff;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #8b98a5;
+      margin-bottom: 2rem;
+    }
+    .zones {
+      display: grid;
+      gap: 1rem;
+      max-width: 24rem;
+    }
+    .zone {
+      background: #192734;
+      border: 1px solid #38444d;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      transition: border-color 0.2s;
+    }
+    .zone:hover { border-color: #1d9bf0; }
+    .zone-name { font-weight: 600; font-size: 1rem; }
+    .zone-stats {
+      display: flex;
+      gap: 1.5rem;
+      font-size: 0.875rem;
+      color: #8b98a5;
+    }
+    .zone-stats span strong { color: #1d9bf0; }
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 0.75rem;
+      color: #8b98a5;
+      margin-top: 2rem;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #1d9bf0;
+      animation: pulse 2s infinite;
+    }
+    .status-dot.error { background: #f4212e; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .empty { color: #8b98a5; font-style: italic; }
+  </style>
+</head>
+<body>
+  <h1>RoomRadar</h1>
+  <p class="subtitle">Occupancy by zone</p>
+  <div class="zones" id="zones"></div>
+  <div class="status" id="status">
+    <span class="status-dot"></span>
+    <span id="status-text">Connecting...</span>
+  </div>
+  <script>
+    const API = window.location.origin;
+    const zonesEl = document.getElementById('zones');
+    const statusText = document.getElementById('status-text');
+    const statusDot = document.querySelector('.status-dot');
+
+    async function fetchOccupancy() {
+      try {
+        const r = await fetch(API + '/occupancy');
+        const data = await r.json();
+        statusText.textContent = 'Live';
+        statusDot.classList.remove('error');
+        renderZones(data.zones || []);
+      } catch (e) {
+        statusText.textContent = 'API offline — start camera with --api-url or run uvicorn';
+        statusDot.classList.add('error');
+        zonesEl.innerHTML = '<p class="empty">No data yet. Run: python -m scripts.run_camera --api-url ' + API + '</p>';
+      }
+    }
+
+    function renderZones(zones) {
+      if (!zones.length) {
+        zonesEl.innerHTML = '<p class="empty">No zones. Start camera with --api-url to push counts.</p>';
+        return;
+      }
+      zonesEl.innerHTML = zones.map(z => `
+        <div class="zone">
+          <span class="zone-name">${escapeHtml(z.name || z.id)}</span>
+          <div class="zone-stats">
+            <span><strong>${z.available ?? 0}</strong> available</span>
+            <span><strong>${z.occupied ?? 0}</strong> occupied</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function escapeHtml(s) {
+      const d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    fetchOccupancy();
+    setInterval(fetchOccupancy, 2000);
+  </script>
+</body>
+</html>

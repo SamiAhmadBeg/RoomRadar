@@ -1,0 +1,11 @@
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.env
+.venv
+*.pt
+*.onnx
+datasets/
+*.db
+.DS_Store
