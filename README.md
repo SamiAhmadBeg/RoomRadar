@@ -10,7 +10,9 @@ python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 ```
-
+``` (Windows)
+.\venv\Scripts\Activate.ps1
+```
 ## Run
 
 **Detection + occupancy (webcam, prints counts):**
