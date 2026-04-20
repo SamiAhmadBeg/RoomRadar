@@ -21,6 +21,21 @@ python -m scripts.run_camera
 ```
 Optional: `--no-show` to hide preview; `--source path/to/video.mp4` for a file.
 
+**Chair + person overlap (COCO, no extra dataset download):** occupied only if a person box overlaps a chair box (IoU). Uses pretrained `person` (0) and `chair` (56).
+
+```bash
+python -m scripts.run_camera --mode chairs --source videos/your.mp4
+python -m scripts.run_camera --mode chairs --iou-threshold 0.2 --api-url http://127.0.0.1:8000
+```
+
+Default `--mode zones` uses `config/zones.json`. For library accuracy you can still fine-tune on your own images later.
+
+**Both methods at once (split view on one video or webcam):**
+```bash
+python -m scripts.run_camera --mode both --source videos/your.mp4
+```
+Left panel shows ROIs + person boxes for zone counts. Right panel is the usual YOLO plot (person + chair). Footer shows both summaries. API gets zone rows plus the chair-overlap summary row if you pass `--api-url`.
+
 **API + dashboard:**
 ```bash
 uvicorn api.server:app --reload --host 0.0.0.0
@@ -50,6 +65,6 @@ Edit `config/zones.json` to define ROI zones (normalized 0–1: `[x1, y1, x2, y2
 ## Project layout
 
 - `detection/` — YOLOv8 person detection
-- `occupancy/` — ROI overlap → available/occupied counts
+- `occupancy/` — ROI overlap (`seat_counter.py`) or chair+person IoU (`chair_overlap.py`)
 - `api/` — FastAPI, GET/POST `/occupancy`
 - `config/zones.json` — zone definitions

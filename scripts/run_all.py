@@ -19,14 +19,92 @@ def main() -> int:
     parser.add_argument("--source", default="0", help="Webcam index or video path")
     parser.add_argument("--no-show", action="store_true", help="Do not show preview window")
     parser.add_argument("--config", default=None, help="Path to zones.json")
+    parser.add_argument(
+        "--mode",
+        choices=("zones", "chairs", "both"),
+        default="zones",
+        help="Passed through to run_camera (zones, chairs, or split both)",
+    )
+    parser.add_argument(
+        "--iou-threshold",
+        type=float,
+        default=0.28,
+        help="chairs/both: overlap threshold (meaning depends on --chair-metric)",
+    )
+    parser.add_argument(
+        "--chair-metric",
+        choices=("blend", "iou", "ioa", "center+ioa"),
+        default="blend",
+        help="chairs/both: overlap metric forwarded to run_camera",
+    )
+    parser.add_argument("--person-conf", type=float, default=0.35, help="chairs/both: min person conf")
+    parser.add_argument("--chair-conf", type=float, default=0.35, help="chairs/both: min chair conf")
+    parser.add_argument(
+        "--rank-with-det-conf",
+        action="store_true",
+        help="chairs/both: rank greedy matches using geom * det_conf",
+    )
+    parser.add_argument(
+        "--require-foot-in-chair",
+        action="store_true",
+        help="chairs/both: stricter seated heuristic forwarded to run_camera",
+    )
+    parser.add_argument(
+        "--chair-expand-frac",
+        type=float,
+        default=0.12,
+        help="chairs/both: chair bbox expansion for foot test forwarded to run_camera",
+    )
+    parser.add_argument("--smooth-alpha", type=float, default=0.35, help="chairs/both: EMA alpha")
+    parser.add_argument("--smooth-window", type=int, default=5, help="chairs/both: vote window")
+    parser.add_argument("--imgsz", type=int, default=960, help="YOLO imgsz forwarded to run_camera")
+    parser.add_argument("--half", action="store_true", help="YOLO half precision forwarded to run_camera")
+    parser.add_argument("--max-det", type=int, default=50, help="YOLO max_det forwarded to run_camera")
+    parser.add_argument("--agnostic-nms", action="store_true", help="YOLO agnostic_nms forwarded to run_camera")
     args = parser.parse_args()
 
     api_cmd = [sys.executable, "-m", "uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]
-    camera_cmd = [sys.executable, "-m", "scripts.run_camera", "--source", str(args.source), "--api-url", "http://127.0.0.1:8000"]
+    camera_cmd = [
+        sys.executable,
+        "-m",
+        "scripts.run_camera",
+        "--source",
+        str(args.source),
+        "--api-url",
+        "http://127.0.0.1:8000",
+        "--mode",
+        args.mode,
+        "--iou-threshold",
+        str(args.iou_threshold),
+        "--chair-metric",
+        str(args.chair_metric),
+        "--person-conf",
+        str(args.person_conf),
+        "--chair-conf",
+        str(args.chair_conf),
+        "--smooth-alpha",
+        str(args.smooth_alpha),
+        "--smooth-window",
+        str(args.smooth_window),
+        "--imgsz",
+        str(args.imgsz),
+        "--max-det",
+        str(args.max_det),
+        "--chair-expand-frac",
+        str(args.chair_expand_frac),
+    ]
     if args.no_show:
         camera_cmd.append("--no-show")
     if args.config:
         camera_cmd.extend(["--config", args.config])
+    if args.rank_with_det_conf:
+        camera_cmd.append("--rank-with-det-conf")
+    if args.half:
+        camera_cmd.append("--half")
+    if args.agnostic_nms:
+        camera_cmd.append("--agnostic-nms")
+    if args.require_foot_in_chair:
+        camera_cmd.append("--require-foot-in-chair")
 
     api_proc = subprocess.Popen(api_cmd)
     time.sleep(2)
