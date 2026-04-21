@@ -5,14 +5,17 @@ Dashboard served at /.
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
+import time
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # In-memory state: list of { id, name, available, occupied } per zone.
 _occupancy: list[dict] = []
+_sources: dict[str, dict] = {}
+DEFAULT_STALE_MS = 10_000
 
 
 def set_occupancy(zones: list[dict]) -> None:
@@ -24,6 +27,85 @@ def set_occupancy(zones: list[dict]) -> None:
 def get_occupancy() -> list[dict]:
     """Return current occupancy snapshot."""
     return list(_occupancy)
+
+
+def _to_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _source_key(node_id: str, camera_id: str) -> str:
+    return f"{node_id}::{camera_id}"
+
+
+def _is_fresh(ts_ms: int, stale_ms: int) -> bool:
+    now_ms = int(time.time() * 1000)
+    return (now_ms - _to_int(ts_ms)) <= stale_ms
+
+
+def _normalize_zone(zone: dict) -> dict:
+    total = max(1, _to_int(zone.get("total_seats", 1), 1))
+    occupied = _to_int(zone.get("occupied", 0), 0)
+    occupied = max(0, min(occupied, total))
+    return {
+        "id": str(zone.get("id", "unknown")),
+        "name": str(zone.get("name", zone.get("id", "unknown"))),
+        "total_seats": total,
+        "occupied": occupied,
+        "available": max(0, total - occupied),
+    }
+
+
+def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
+    """
+    Fuse multi-camera occupancy into one decision per zone.
+    Each source votes occupied/free for a zone (occupied > 0 -> 1 else 0).
+    Final decision = weighted majority (weights by total_seats, min 1).
+    """
+    active = [s for s in _sources.values() if _is_fresh(_to_int(s.get("ts_ms", 0)), stale_ms)]
+    acc: dict[str, dict] = {}
+    for src in active:
+        for z in src.get("zones", []):
+            nz = _normalize_zone(z)
+            zid = nz["id"]
+            item = acc.setdefault(
+                zid,
+                {
+                    "id": zid,
+                    "name": nz["name"],
+                    "total_seats": nz["total_seats"],
+                    "weight_total": 0.0,
+                    "weight_occ": 0.0,
+                    "sources": 0,
+                },
+            )
+            weight = float(max(1, nz["total_seats"]))
+            vote = 1.0 if nz["occupied"] > 0 else 0.0
+            item["weight_total"] += weight
+            item["weight_occ"] += weight * vote
+            item["sources"] += 1
+            item["total_seats"] = max(item["total_seats"], nz["total_seats"])
+
+    fused: list[dict] = []
+    for zid, item in acc.items():
+        ratio = item["weight_occ"] / item["weight_total"] if item["weight_total"] > 0 else 0.0
+        occupied = 1 if ratio >= 0.5 else 0
+        total = max(1, _to_int(item["total_seats"], 1))
+        fused.append(
+            {
+                "id": zid,
+                "name": item["name"],
+                "occupied": occupied,
+                "total_seats": total,
+                "available": max(0, total - occupied),
+                "sources": item["sources"],
+                "vote_ratio": round(ratio, 4),
+            }
+        )
+    fused.sort(key=lambda z: z["id"])
+    return fused, {"active_sources": len(active), "tracked_sources": len(_sources), "stale_ms": stale_ms}
 
 
 @asynccontextmanager
@@ -48,19 +130,55 @@ def dashboard():
 
 class ZoneUpdate(BaseModel):
     zones: list[dict]
+    node_id: str = "unknown-node"
+    camera_id: str = "cam_1"
+    ts_ms: int = Field(default_factory=lambda: int(time.time() * 1000))
+    seq: int = 0
 
 
 @app.get("/occupancy")
 def occupancy():
-    """Returns current per-zone counts. No video, no PII."""
-    return {"zones": get_occupancy()}
+    """Returns fused per-zone counts from all active camera sources."""
+    zones, meta = _fuse()
+    if zones:
+        set_occupancy(zones)
+    return {"zones": zones, "meta": meta}
 
 
 @app.post("/occupancy")
 def update_occupancy(payload: ZoneUpdate):
     """Accept occupancy update from detection node (e.g. edge device or run_camera)."""
+    key = _source_key(payload.node_id, payload.camera_id)
+    _sources[key] = {
+        "node_id": payload.node_id,
+        "camera_id": payload.camera_id,
+        "ts_ms": payload.ts_ms,
+        "seq": payload.seq,
+        "zones": list(payload.zones),
+    }
     set_occupancy(payload.zones)
-    return {"status": "ok"}
+    return {"status": "ok", "source": key}
+
+
+@app.get("/occupancy/raw")
+def occupancy_raw(stale_ms: int = DEFAULT_STALE_MS):
+    """Returns latest per-source occupancy and freshness."""
+    now_ms = int(time.time() * 1000)
+    nodes = []
+    for key, src in _sources.items():
+        age_ms = max(0, now_ms - _to_int(src.get("ts_ms", 0)))
+        nodes.append(
+            {
+                "source": key,
+                "node_id": src.get("node_id"),
+                "camera_id": src.get("camera_id"),
+                "seq": src.get("seq", 0),
+                "age_ms": age_ms,
+                "fresh": age_ms <= stale_ms,
+                "zones": src.get("zones", []),
+            }
+        )
+    return {"nodes": nodes, "tracked_sources": len(_sources), "stale_ms": stale_ms}
 
 
 @app.get("/health")

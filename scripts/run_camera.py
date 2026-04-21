@@ -10,6 +10,8 @@ Run from project root: python -m scripts.run_camera
 """
 import argparse
 import json
+import socket
+import time
 import urllib.request
 from collections import defaultdict, deque
 from pathlib import Path
@@ -18,11 +20,26 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
-def post_occupancy(api_url: str, zones: list[dict]) -> None:
+def post_occupancy(
+    api_url: str,
+    zones: list[dict],
+    *,
+    node_id: str,
+    camera_id: str,
+    seq: int,
+) -> None:
     """POST zone counts to RoomRadar API (no deps beyond stdlib)."""
     req = urllib.request.Request(
         f"{api_url.rstrip('/')}/occupancy",
-        data=json.dumps({"zones": zones}).encode(),
+        data=json.dumps(
+            {
+                "node_id": node_id,
+                "camera_id": camera_id,
+                "ts_ms": int(time.time() * 1000),
+                "seq": int(seq),
+                "zones": zones,
+            }
+        ).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -161,6 +178,16 @@ def main():
     parser.add_argument("--no-show", action="store_true", help="No preview window")
     parser.add_argument("--api-url", default="", help="e.g. http://127.0.0.1:8000 to POST counts")
     parser.add_argument(
+        "--node-id",
+        default=socket.gethostname(),
+        help="Unique sender id for this inference node (e.g. rubik-pi hostname)",
+    )
+    parser.add_argument(
+        "--camera-id",
+        default="cam_1",
+        help="Unique camera id under this node (e.g. cam_1, cam_2)",
+    )
+    parser.add_argument(
         "--mode",
         choices=("zones", "chairs", "both"),
         default="zones",
@@ -240,6 +267,14 @@ def main():
         action="store_true",
         help="YOLO class-agnostic NMS (sometimes helps when boxes overlap a lot)",
     )
+    parser.add_argument("--width", type=int, default=640, help="Camera capture width (dual-cam Pi: keep low)")
+    parser.add_argument("--height", type=int, default=480, help="Camera capture height (dual-cam Pi: keep low)")
+    parser.add_argument("--fps", type=int, default=15, help="Camera capture FPS (dual-cam Pi: keep low)")
+    parser.add_argument(
+        "--mjpg",
+        action="store_true",
+        help="Request MJPG camera format (reduces USB bandwidth pressure on many webcams)",
+    )
     args = parser.parse_args()
     source = int(args.source) if str(args.source).isdigit() else args.source
     config_path = args.config or (PROJECT_ROOT / "config" / "zones.json")
@@ -254,6 +289,12 @@ def main():
         "max_det": int(args.max_det),
         "agnostic_nms": bool(args.agnostic_nms),
     }
+    camera_kw: dict = {
+        "width": int(args.width),
+        "height": int(args.height),
+        "fps": int(args.fps),
+        "mjpg": bool(args.mjpg),
+    }
 
     chair_cfg = ChairMatchConfig(
         metric=str(args.chair_metric),
@@ -263,6 +304,7 @@ def main():
         chair_expand_frac=float(args.chair_expand_frac),
     )
     chair_smoother = _ChairOccSmoother(alpha=float(args.smooth_alpha), window=int(args.smooth_window))
+    seq = 0
 
     if args.mode == "both":
         import cv2
@@ -483,10 +525,18 @@ def main():
             annotate_frame=annotate_dual,
             window_title="RoomRadar zones | chairs (ESC)",
             predict_kw=predict_kw,
+            camera_kw=camera_kw,
         ):
             merged = list(state.get("zones", [])) + list(state.get("chairs", []))
             if args.api_url and merged:
-                post_occupancy(args.api_url, merged)
+                seq += 1
+                post_occupancy(
+                    args.api_url,
+                    merged,
+                    node_id=args.node_id,
+                    camera_id=args.camera_id,
+                    seq=seq,
+                )
             zt = state.get("zones", [])
             ct = state.get("chairs", [{}])[0] if state.get("chairs") else {}
             zline = "  ".join(f"{z['name'][:8]}:{z['occupied']}/{z['total_seats']}" for z in zt)
@@ -501,6 +551,7 @@ def main():
         show=not args.no_show,
         classes=det_classes,
         predict_kw=predict_kw,
+        camera_kw=camera_kw,
     ):
         if args.mode == "chairs":
             person_dets = get_detections_by_class(
@@ -527,7 +578,14 @@ def main():
             h, w = frame.shape[:2]
             zones = compute_occupancy(boxes, w, h, config_path=config_path)
         if args.api_url:
-            post_occupancy(args.api_url, zones)
+            seq += 1
+            post_occupancy(
+                args.api_url,
+                zones,
+                node_id=args.node_id,
+                camera_id=args.camera_id,
+                seq=seq,
+            )
         for z in zones:
             print(
                 f"  {z['name']}: {z['available']}/{z['total_seats']} available, "

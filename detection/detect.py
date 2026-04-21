@@ -36,6 +36,7 @@ def run_detection(
     annotate_frame=None,
     window_title: str = "RoomRadar",
     predict_kw: dict | None = None,
+    camera_kw: dict | None = None,
 ):
     """
     Run person detection on webcam (source=0), video file, or a single image path.
@@ -75,6 +76,21 @@ def run_detection(
     cap = cv2.VideoCapture(source)
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open video source: {source}")
+    camera_kw = dict(camera_kw or {})
+    width = int(camera_kw.get("width", 0) or 0)
+    height = int(camera_kw.get("height", 0) or 0)
+    fps = int(camera_kw.get("fps", 0) or 0)
+    use_mjpg = bool(camera_kw.get("mjpg", False))
+
+    # Force lighter capture settings for low-bandwidth devices (e.g., dual USB cams on Pi).
+    if use_mjpg:
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    if width > 0:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+    if height > 0:
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+    if fps > 0:
+        cap.set(cv2.CAP_PROP_FPS, fps)
 
     try:
         while True:

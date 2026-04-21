@@ -8,6 +8,7 @@ Usage:
     python -m scripts.run_all
 """
 import argparse
+import socket
 import signal
 import subprocess
 import sys
@@ -16,9 +17,17 @@ import time
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run RoomRadar API and camera pipeline")
-    parser.add_argument("--source", default="0", help="Webcam index or video path")
+    parser.add_argument("--source", default="0", help="Primary webcam index or video path")
+    parser.add_argument(
+        "--source-2",
+        default="",
+        help="Optional second camera index/video path (for dual-camera Pi setup)",
+    )
     parser.add_argument("--no-show", action="store_true", help="Do not show preview window")
     parser.add_argument("--config", default=None, help="Path to zones.json")
+    parser.add_argument("--node-id", default=socket.gethostname(), help="Node id sent by both camera streams")
+    parser.add_argument("--camera-id", default="cam_1", help="Camera id for --source stream")
+    parser.add_argument("--camera-id-2", default="cam_2", help="Camera id for --source-2 stream")
     parser.add_argument(
         "--mode",
         choices=("zones", "chairs", "both"),
@@ -72,6 +81,10 @@ def main() -> int:
         str(args.source),
         "--api-url",
         "http://127.0.0.1:8000",
+        "--node-id",
+        str(args.node_id),
+        "--camera-id",
+        str(args.camera_id),
         "--mode",
         args.mode,
         "--iou-threshold",
@@ -93,28 +106,79 @@ def main() -> int:
         "--chair-expand-frac",
         str(args.chair_expand_frac),
     ]
+    camera2_cmd = []
+    if str(args.source_2):
+        camera2_cmd = [
+            sys.executable,
+            "-m",
+            "scripts.run_camera",
+            "--source",
+            str(args.source_2),
+            "--api-url",
+            "http://127.0.0.1:8000",
+            "--node-id",
+            str(args.node_id),
+            "--camera-id",
+            str(args.camera_id_2),
+            "--mode",
+            args.mode,
+            "--iou-threshold",
+            str(args.iou_threshold),
+            "--chair-metric",
+            str(args.chair_metric),
+            "--person-conf",
+            str(args.person_conf),
+            "--chair-conf",
+            str(args.chair_conf),
+            "--smooth-alpha",
+            str(args.smooth_alpha),
+            "--smooth-window",
+            str(args.smooth_window),
+            "--imgsz",
+            str(args.imgsz),
+            "--max-det",
+            str(args.max_det),
+            "--chair-expand-frac",
+            str(args.chair_expand_frac),
+        ]
     if args.no_show:
         camera_cmd.append("--no-show")
+        if camera2_cmd:
+            camera2_cmd.append("--no-show")
     if args.config:
         camera_cmd.extend(["--config", args.config])
+        if camera2_cmd:
+            camera2_cmd.extend(["--config", args.config])
     if args.rank_with_det_conf:
         camera_cmd.append("--rank-with-det-conf")
+        if camera2_cmd:
+            camera2_cmd.append("--rank-with-det-conf")
     if args.half:
         camera_cmd.append("--half")
+        if camera2_cmd:
+            camera2_cmd.append("--half")
     if args.agnostic_nms:
         camera_cmd.append("--agnostic-nms")
+        if camera2_cmd:
+            camera2_cmd.append("--agnostic-nms")
     if args.require_foot_in_chair:
         camera_cmd.append("--require-foot-in-chair")
+        if camera2_cmd:
+            camera2_cmd.append("--require-foot-in-chair")
 
     api_proc = subprocess.Popen(api_cmd)
     time.sleep(2)
     camera_proc = subprocess.Popen(camera_cmd)
+    camera2_proc = subprocess.Popen(camera2_cmd) if camera2_cmd else None
 
     def shutdown(*_):
-        for proc in (camera_proc, api_proc):
+        procs = [camera_proc, api_proc]
+        if camera2_proc is not None:
+            procs.insert(1, camera2_proc)
+        for proc in procs:
             if proc.poll() is None:
                 proc.terminate()
-        for proc in (camera_proc, api_proc):
+        for proc in procs:
             try:
                 proc.wait(timeout=5)
             except Exception:
