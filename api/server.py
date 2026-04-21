@@ -2,9 +2,14 @@
 RoomRadar API: counts-only backend. GET /occupancy returns current zone counts.
 Detection process (or a background task) can POST /occupancy to update state.
 Dashboard served at /.
+
+Fusion (env ROOMRADAR_FUSION): ``max`` (default) = redundant/overlapping cameras;
+``sum`` = complementary views of the same zone id (counts are summed, capped by total_seats).
+Stale cutoff: ROOMRADAR_STALE_MS (default 10000).
 """
 from contextlib import asynccontextmanager
 from pathlib import Path
+import os
 import time
 
 from fastapi import FastAPI
@@ -15,7 +20,9 @@ from pydantic import BaseModel, Field
 # In-memory state: list of { id, name, available, occupied } per zone.
 _occupancy: list[dict] = []
 _sources: dict[str, dict] = {}
-DEFAULT_STALE_MS = 10_000
+DEFAULT_STALE_MS = int(os.environ.get("ROOMRADAR_STALE_MS", "10000"))
+# max: overlapping cameras (same physical seats). sum: partitioned views sharing a zone id.
+DEFAULT_FUSION = os.environ.get("ROOMRADAR_FUSION", "max").strip().lower()
 
 
 def set_occupancy(zones: list[dict]) -> None:
@@ -58,17 +65,27 @@ def _normalize_zone(zone: dict) -> dict:
     }
 
 
-def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
+def _fuse(
+    stale_ms: int = DEFAULT_STALE_MS,
+    fusion: str | None = None,
+) -> tuple[list[dict], dict]:
     """
     Fuse multi-camera occupancy into one snapshot per zone id.
 
     Each physical stream posts as (node_id, camera_id) with its own zone rows.
-    Aggregation rule (OR across cameras): for each zone id, take the maximum
-    reported ``occupied`` across *fresh* sources, capped by the largest
-    ``total_seats`` seen for that zone. So if any camera sees occupancy in that
-    zone, the fused count reflects at least that maximum (two cameras cannot
-    "vote down" a seat another camera still sees as taken).
+
+    ``max`` (default): take the maximum reported ``occupied`` across *fresh*
+    sources — best when cameras overlap on the same physical seats (avoids
+    double-counting the same person).
+
+    ``sum``: add occupied counts across sources, capped by ``total_seats`` — use
+    when the same zone id is intentionally split across cameras (partitioned
+    seating). Prefer assigning distinct zone ids or ``camera_id`` in zones.json
+    instead when possible.
     """
+    mode = (fusion or DEFAULT_FUSION or "max").lower()
+    if mode not in ("max", "sum"):
+        mode = "max"
     active = [s for s in _sources.values() if _is_fresh(_to_int(s.get("ts_ms", 0)), stale_ms)]
     acc: dict[str, dict] = {}
     for src in active:
@@ -82,17 +99,25 @@ def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
                     "name": nz["name"],
                     "total_seats": nz["total_seats"],
                     "occupied_max": 0,
+                    "occupied_sum": 0,
                     "sources": 0,
                 },
             )
-            item["occupied_max"] = max(item["occupied_max"], nz["occupied"])
+            if mode == "sum":
+                item["occupied_sum"] = _to_int(item.get("occupied_sum", 0), 0) + nz["occupied"]
+            else:
+                item["occupied_max"] = max(_to_int(item.get("occupied_max", 0), 0), nz["occupied"])
             item["total_seats"] = max(item["total_seats"], nz["total_seats"])
             item["sources"] += 1
 
     fused: list[dict] = []
+    fusion_label = "sum_occupied" if mode == "sum" else "max_occupied"
     for zid, item in acc.items():
         total = max(1, _to_int(item["total_seats"], 1))
-        occupied = min(total, _to_int(item["occupied_max"], 0))
+        if mode == "sum":
+            occupied = min(total, _to_int(item.get("occupied_sum", 0), 0))
+        else:
+            occupied = min(total, _to_int(item.get("occupied_max", 0), 0))
         fused.append(
             {
                 "id": zid,
@@ -101,11 +126,16 @@ def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
                 "total_seats": total,
                 "available": max(0, total - occupied),
                 "sources": item["sources"],
-                "fusion": "max_occupied",
+                "fusion": fusion_label,
             }
         )
     fused.sort(key=lambda z: z["id"])
-    return fused, {"active_sources": len(active), "tracked_sources": len(_sources), "stale_ms": stale_ms}
+    return fused, {
+        "active_sources": len(active),
+        "tracked_sources": len(_sources),
+        "stale_ms": stale_ms,
+        "fusion": mode,
+    }
 
 
 @asynccontextmanager
@@ -137,9 +167,9 @@ class ZoneUpdate(BaseModel):
 
 
 @app.get("/occupancy")
-def occupancy():
-    """Returns fused per-zone counts: max(occupied) across fresh camera sources per zone id."""
-    zones, meta = _fuse()
+def occupancy(fusion: str | None = None):
+    """Returns fused per-zone counts. Query ``fusion=max|sum`` overrides ROOMRADAR_FUSION for this request."""
+    zones, meta = _fuse(fusion=fusion)
     if zones:
         set_occupancy(zones)
         return {"zones": zones, "meta": meta}
@@ -158,7 +188,11 @@ def update_occupancy(payload: ZoneUpdate):
         "seq": payload.seq,
         "zones": list(payload.zones),
     }
-    set_occupancy(payload.zones)
+    fused, _meta = _fuse()
+    if fused:
+        set_occupancy(fused)
+    else:
+        set_occupancy(payload.zones)
     return {"status": "ok", "source": key}
 
 

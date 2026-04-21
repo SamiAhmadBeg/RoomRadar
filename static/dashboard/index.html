@@ -70,7 +70,7 @@
 </head>
 <body>
   <h1>RoomRadar</h1>
-  <p class="subtitle">Fused occupancy by zone — two camera streams aggregated (max occupied per zone)</p>
+  <p class="subtitle">Fused occupancy by zone — multi-camera streams aggregated (see server fusion mode)</p>
   <div class="zones" id="zones"></div>
   <p class="subtitle" id="meta" style="margin-top: 1rem; margin-bottom: 0;">Waiting for stream metadata...</p>
   <div class="status" id="status">
@@ -106,8 +106,10 @@
         }
         const active = data.meta?.active_sources ?? 0;
         const tracked = data.meta?.tracked_sources ?? 0;
-        const stale = Math.round((raw.stale_ms ?? 10000) / 1000);
-        metaEl.textContent = `Active sources: ${active}/${tracked} | stale cutoff: ${stale}s`;
+        const stale = Math.round((data.meta?.stale_ms ?? raw.stale_ms ?? 10000) / 1000);
+        const fusion = data.meta?.fusion ?? 'max';
+        metaEl.textContent =
+          `Fusion: ${fusion} | Active: ${active}/${tracked} | stale cutoff: ${stale}s | UI poll: 1s`;
       } catch (e) {
         statusText.textContent = 'API offline — start camera with --api-url or run uvicorn';
         statusDot.classList.add('error');
@@ -141,7 +143,7 @@
     }
 
     fetchOccupancy();
-    setInterval(fetchOccupancy, 2000);
+    setInterval(fetchOccupancy, 1000);
   </script>
 </body>
 </html>

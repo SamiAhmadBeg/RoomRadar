@@ -153,7 +153,7 @@ def main():
         occupied_seat_pairs_matched,
         union_xyxy,
     )
-    from occupancy.seat_counter import compute_occupancy, load_zones
+    from occupancy.seat_counter import compute_occupancy, filter_zones_for_camera, load_zones
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--source", default=0, help="Webcam index or video path")
@@ -332,7 +332,9 @@ def main():
             # Slightly smaller than bbox labels for top banners, but still readable in 4K.
             banner_font_scale = max(0.75, banner_font_scale * 0.85)
             banner_thickness = 2 if banner_font_scale < 1.35 else 3
-            state["zones"] = compute_occupancy(persons, w, h, config_path=config_path)
+            state["zones"] = compute_occupancy(
+                persons, w, h, config_path=config_path, camera_id=str(args.camera_id)
+            )
             seat_pairs = occupied_seat_pairs_matched(person_dets, chair_dets, chair_cfg)
             raw_occ = {ci: geom for ci, (_pi, geom) in seat_pairs.items()}
             sm = chair_smoother.smooth(raw_occ, n_chairs=len(chair_dets))
@@ -351,7 +353,7 @@ def main():
             state["occupied_chair_scores"] = {i: float(sm[i]) for i in range(n_chairs) if sm.get(i, 0.0) >= 0.5}
 
             left = frame.copy()
-            for z in load_zones(config_path):
+            for z in filter_zones_for_camera(load_zones(config_path), str(args.camera_id)):
                 roi = z.get("roi", [0, 0, 1, 1])
                 x1, y1 = int(roi[0] * w), int(roi[1] * h)
                 x2, y2 = int(roi[2] * w), int(roi[3] * h)
@@ -587,7 +589,9 @@ def main():
         else:
             boxes = get_person_boxes(results)
             h, w = frame.shape[:2]
-            zones = compute_occupancy(boxes, w, h, config_path=config_path)
+            zones = compute_occupancy(
+                boxes, w, h, config_path=config_path, camera_id=str(args.camera_id)
+            )
         if args.api_url:
             seq += 1
             post_occupancy(

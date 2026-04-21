@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import api.server as srv  # noqa: E402
+from occupancy.seat_counter import filter_zones_for_camera  # noqa: E402
 
 
 def _ingest(node_id: str, camera_id: str, seq: int, zones: list[dict]) -> None:
@@ -77,7 +78,32 @@ def main() -> int:
     z = {z["id"]: z for z in srv._fuse()[0]}["zone_big"]
     assert z["occupied"] == 3 and z["total_seats"] == 5, z
 
-    print("fusion tests OK (dual-camera aggregate = max occupied per zone)")
+    # Sum fusion: complementary counts for same zone id
+    srv._sources.clear()
+    _ingest(
+        "test-node",
+        "cam_1",
+        1,
+        [{"id": "zone_big", "name": "Hall", "total_seats": 5, "occupied": 2, "available": 3}],
+    )
+    _ingest(
+        "test-node",
+        "cam_2",
+        2,
+        [{"id": "zone_big", "name": "Hall", "total_seats": 5, "occupied": 2, "available": 3}],
+    )
+    z_sum = {z["id"]: z for z in srv._fuse(fusion="sum")[0]}["zone_big"]
+    assert z_sum["occupied"] == 4 and z_sum["fusion"] == "sum_occupied", z_sum
+
+    # Per-camera zone filter: each stream only evaluates its rows
+    sample = [
+        {"id": "z1", "camera_id": "cam_1", "roi": [0, 0, 1, 1], "total_seats": 1},
+        {"id": "z2", "camera_id": "cam_2", "roi": [0, 0, 1, 1], "total_seats": 1},
+        {"id": "z3", "roi": [0, 0, 1, 1], "total_seats": 1},
+    ]
+    assert [z["id"] for z in filter_zones_for_camera(sample, "cam_1")] == ["z1", "z3"]
+
+    print("fusion tests OK (max/sum + zone filter)")
     return 0
 
 

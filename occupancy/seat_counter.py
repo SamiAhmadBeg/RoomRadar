@@ -16,6 +16,27 @@ def load_zones(config_path: str | Path) -> list[dict]:
     return data.get("zones", [])
 
 
+def zone_applies_to_camera(zone: dict, camera_id: str | None) -> bool:
+    """
+    If a zone sets ``camera_id`` or ``cameras``, only that stream evaluates it.
+    Untagged zones apply to every camera (legacy / overlapping views).
+    """
+    if not camera_id:
+        return True
+    cid = zone.get("camera_id")
+    if cid is not None:
+        return str(cid) == str(camera_id)
+    cams = zone.get("cameras")
+    if cams is not None:
+        return str(camera_id) in [str(c) for c in cams]
+    return True
+
+
+def filter_zones_for_camera(zones: list[dict], camera_id: str | None) -> list[dict]:
+    """Restrict zone list to rows that belong on this camera feed."""
+    return [z for z in zones if zone_applies_to_camera(z, camera_id)]
+
+
 def box_center(box_xyxy: list[float]) -> tuple[float, float]:
     """(x1,y1,x2,y2) -> (cx, cy)."""
     x1, y1, x2, y2 = box_xyxy[:4]
@@ -82,7 +103,8 @@ def compute_occupancy(
     frame_width: int,
     frame_height: int,
     config_path: str | Path = "config/zones.json",
+    camera_id: str | None = None,
 ) -> list[dict]:
     """Load zones and return per-zone occupancy. Root dir is project root."""
-    zones = load_zones(config_path)
+    zones = filter_zones_for_camera(load_zones(config_path), camera_id)
     return count_occupied_per_zone(boxes_xyxy, frame_width, frame_height, zones)

@@ -1,0 +1,33 @@
+{
+  "camera_id": "default",
+  "zones": [
+    {
+      "id": "zone_1",
+      "name": "Area 1",
+      "camera_id": "cam_1",
+      "roi": [0.0, 0.0, 0.5, 0.5],
+      "total_seats": 1
+    },
+    {
+      "id": "zone_2",
+      "name": "Area 2",
+      "camera_id": "cam_1",
+      "roi": [0.5, 0.0, 1.0, 0.5],
+      "total_seats": 1
+    },
+    {
+      "id": "zone_3",
+      "name": "Area 3",
+      "camera_id": "cam_2",
+      "roi": [0.0, 0.0, 0.5, 0.5],
+      "total_seats": 1
+    },
+    {
+      "id": "zone_4",
+      "name": "Area 4",
+      "camera_id": "cam_2",
+      "roi": [0.5, 0.0, 1.0, 0.5],
+      "total_seats": 1
+    }
+  ]
+}
