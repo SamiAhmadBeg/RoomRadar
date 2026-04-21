@@ -50,6 +50,13 @@ python -m scripts.run_all
 ```
 This starts the API first, then the camera pipeline posting counts to it.
 
+**Two camera inputs (same node):** pass a second source; each stream uses its own `--camera-id` and the API **aggregates** zones. Fusion rule: for each zone id, take the **maximum** `occupied` across fresh cameras, capped by the largest `total_seats` for that zone — **if any camera still sees seats taken, the fused snapshot does not drop below that maximum** (no majority vote that clears another camera’s occupied view).
+
+```bash
+python -m scripts.run_all --source 0 --source-2 1 --camera-id cam_1 --camera-id-2 cam_2 --node-id rubik-pi --mjpg
+```
+Use `--width`, `--height`, `--fps` on `run_all` to keep USB bandwidth reasonable on edge boards.
+
 **Push counts to API while running camera:**
 ```bash
 # Terminal 1

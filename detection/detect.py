@@ -57,6 +57,9 @@ def run_detection(
         if frame is None:
             raise RuntimeError(f"Cannot read image: {path}")
         results = model(frame, classes=classes, verbose=False, **predict_kw)
+        # Ensure annotation hooks run even in headless mode (useful for saving frames).
+        if annotate_frame is not None:
+            _ = annotate_frame(frame, results)
         try:
             if show:
                 while True:

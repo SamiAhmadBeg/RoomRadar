@@ -70,6 +70,14 @@ def main() -> int:
     parser.add_argument("--half", action="store_true", help="YOLO half precision forwarded to run_camera")
     parser.add_argument("--max-det", type=int, default=50, help="YOLO max_det forwarded to run_camera")
     parser.add_argument("--agnostic-nms", action="store_true", help="YOLO agnostic_nms forwarded to run_camera")
+    parser.add_argument("--width", type=int, default=640, help="Camera capture width (forwarded to both run_camera procs)")
+    parser.add_argument("--height", type=int, default=480, help="Camera capture height (forwarded to both run_camera procs)")
+    parser.add_argument("--fps", type=int, default=15, help="Camera capture FPS (forwarded to both run_camera procs)")
+    parser.add_argument(
+        "--mjpg",
+        action="store_true",
+        help="Request MJPG from both cameras (forwarded to both run_camera procs)",
+    )
     args = parser.parse_args()
 
     api_cmd = [sys.executable, "-m", "uvicorn", "api.server:app", "--host", "0.0.0.0", "--port", "8000"]
@@ -105,6 +113,12 @@ def main() -> int:
         str(args.max_det),
         "--chair-expand-frac",
         str(args.chair_expand_frac),
+        "--width",
+        str(args.width),
+        "--height",
+        str(args.height),
+        "--fps",
+        str(args.fps),
     ]
     camera2_cmd = []
     if str(args.source_2):
@@ -140,6 +154,12 @@ def main() -> int:
             str(args.max_det),
             "--chair-expand-frac",
             str(args.chair_expand_frac),
+            "--width",
+            str(args.width),
+            "--height",
+            str(args.height),
+            "--fps",
+            str(args.fps),
         ]
     if args.no_show:
         camera_cmd.append("--no-show")
@@ -165,6 +185,10 @@ def main() -> int:
         camera_cmd.append("--require-foot-in-chair")
         if camera2_cmd:
             camera2_cmd.append("--require-foot-in-chair")
+    if args.mjpg:
+        camera_cmd.append("--mjpg")
+        if camera2_cmd:
+            camera2_cmd.append("--mjpg")
 
     api_proc = subprocess.Popen(api_cmd)
     time.sleep(2)

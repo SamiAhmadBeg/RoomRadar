@@ -60,9 +60,14 @@ def _normalize_zone(zone: dict) -> dict:
 
 def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
     """
-    Fuse multi-camera occupancy into one decision per zone.
-    Each source votes occupied/free for a zone (occupied > 0 -> 1 else 0).
-    Final decision = weighted majority (weights by total_seats, min 1).
+    Fuse multi-camera occupancy into one snapshot per zone id.
+
+    Each physical stream posts as (node_id, camera_id) with its own zone rows.
+    Aggregation rule (OR across cameras): for each zone id, take the maximum
+    reported ``occupied`` across *fresh* sources, capped by the largest
+    ``total_seats`` seen for that zone. So if any camera sees occupancy in that
+    zone, the fused count reflects at least that maximum (two cameras cannot
+    "vote down" a seat another camera still sees as taken).
     """
     active = [s for s in _sources.values() if _is_fresh(_to_int(s.get("ts_ms", 0)), stale_ms)]
     acc: dict[str, dict] = {}
@@ -76,23 +81,18 @@ def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
                     "id": zid,
                     "name": nz["name"],
                     "total_seats": nz["total_seats"],
-                    "weight_total": 0.0,
-                    "weight_occ": 0.0,
+                    "occupied_max": 0,
                     "sources": 0,
                 },
             )
-            weight = float(max(1, nz["total_seats"]))
-            vote = 1.0 if nz["occupied"] > 0 else 0.0
-            item["weight_total"] += weight
-            item["weight_occ"] += weight * vote
-            item["sources"] += 1
+            item["occupied_max"] = max(item["occupied_max"], nz["occupied"])
             item["total_seats"] = max(item["total_seats"], nz["total_seats"])
+            item["sources"] += 1
 
     fused: list[dict] = []
     for zid, item in acc.items():
-        ratio = item["weight_occ"] / item["weight_total"] if item["weight_total"] > 0 else 0.0
-        occupied = 1 if ratio >= 0.5 else 0
         total = max(1, _to_int(item["total_seats"], 1))
+        occupied = min(total, _to_int(item["occupied_max"], 0))
         fused.append(
             {
                 "id": zid,
@@ -101,7 +101,7 @@ def _fuse(stale_ms: int = DEFAULT_STALE_MS) -> tuple[list[dict], dict]:
                 "total_seats": total,
                 "available": max(0, total - occupied),
                 "sources": item["sources"],
-                "vote_ratio": round(ratio, 4),
+                "fusion": "max_occupied",
             }
         )
     fused.sort(key=lambda z: z["id"])
@@ -138,7 +138,7 @@ class ZoneUpdate(BaseModel):
 
 @app.get("/occupancy")
 def occupancy():
-    """Returns fused per-zone counts from all active camera sources."""
+    """Returns fused per-zone counts: max(occupied) across fresh camera sources per zone id."""
     zones, meta = _fuse()
     if zones:
         set_occupancy(zones)

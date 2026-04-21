@@ -176,6 +176,11 @@ def main():
     )
     parser.add_argument("--config", default=None, help="Path to zones.json (zones mode only)")
     parser.add_argument("--no-show", action="store_true", help="No preview window")
+    parser.add_argument(
+        "--save",
+        default="",
+        help="Optional: path to save the last annotated frame (useful for images).",
+    )
     parser.add_argument("--api-url", default="", help="e.g. http://127.0.0.1:8000 to POST counts")
     parser.add_argument(
         "--node-id",
@@ -515,7 +520,9 @@ def main():
                 f_thick,
                 lineType=cv2.LINE_AA,
             )
-            return np.vstack([combined, footer])
+            annotated = np.vstack([combined, footer])
+            state["last_annotated"] = annotated
+            return annotated
 
         for _frame, _results in run_detection(
             source=source,
@@ -542,6 +549,10 @@ def main():
             zline = "  ".join(f"{z['name'][:8]}:{z['occupied']}/{z['total_seats']}" for z in zt)
             cline = f"chairs:{ct.get('occupied', 0)}/{ct.get('total_seats', 0)}"
             print(f"  {zline}  |  {cline}", end="\r")
+        if args.save and state.get("last_annotated") is not None:
+            out_path = Path(args.save)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            cv2.imwrite(str(out_path), state["last_annotated"])
         print("\nDone.")
         return
 
