@@ -142,7 +142,9 @@ def occupancy():
     zones, meta = _fuse()
     if zones:
         set_occupancy(zones)
-    return {"zones": zones, "meta": meta}
+        return {"zones": zones, "meta": meta}
+    # Avoid empty responses during transient camera startup/drop windows.
+    return {"zones": get_occupancy(), "meta": meta}
 
 
 @app.post("/occupancy")

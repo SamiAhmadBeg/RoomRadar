@@ -70,8 +70,9 @@
 </head>
 <body>
   <h1>RoomRadar</h1>
-  <p class="subtitle">Occupancy by zone</p>
+  <p class="subtitle">Fused occupancy by zone (multi-camera)</p>
   <div class="zones" id="zones"></div>
+  <p class="subtitle" id="meta" style="margin-top: 1rem; margin-bottom: 0;">Waiting for stream metadata...</p>
   <div class="status" id="status">
     <span class="status-dot"></span>
     <span id="status-text">Connecting...</span>
@@ -79,20 +80,41 @@
   <script>
     const API = window.location.origin;
     const zonesEl = document.getElementById('zones');
+    const metaEl = document.getElementById('meta');
     const statusText = document.getElementById('status-text');
     const statusDot = document.querySelector('.status-dot');
+    let lastZones = [];
 
     async function fetchOccupancy() {
       try {
-        const r = await fetch(API + '/occupancy');
-        const data = await r.json();
+        const [fusedRes, rawRes] = await Promise.all([
+          fetch(API + '/occupancy'),
+          fetch(API + '/occupancy/raw'),
+        ]);
+        const data = await fusedRes.json();
+        const raw = await rawRes.json();
         statusText.textContent = 'Live';
         statusDot.classList.remove('error');
-        renderZones(data.zones || []);
+        const zones = data.zones || [];
+        if (zones.length) {
+          lastZones = zones;
+          renderZones(zones);
+        } else if (lastZones.length) {
+          renderZones(lastZones);
+        } else {
+          renderZones([]);
+        }
+        const active = data.meta?.active_sources ?? 0;
+        const tracked = data.meta?.tracked_sources ?? 0;
+        const stale = Math.round((raw.stale_ms ?? 10000) / 1000);
+        metaEl.textContent = `Active sources: ${active}/${tracked} | stale cutoff: ${stale}s`;
       } catch (e) {
         statusText.textContent = 'API offline — start camera with --api-url or run uvicorn';
         statusDot.classList.add('error');
-        zonesEl.innerHTML = '<p class="empty">No data yet. Run: python -m scripts.run_camera --api-url ' + API + '</p>';
+        if (!lastZones.length) {
+          zonesEl.innerHTML = '<p class="empty">No data yet. Run: python -m scripts.run_camera --api-url ' + API + '</p>';
+        }
+        metaEl.textContent = 'API offline';
       }
     }
 
